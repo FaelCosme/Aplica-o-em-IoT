@@ -12,16 +12,16 @@ const int pinoBtnSave = 23;
 AccelStepper stepper = AccelStepper(motorInterfaceType, stepPin, dirPin);
 Preferences prefs;
 
-const float velJog    = 600.0;
-const float velAuto   = 1000.0;
-const float accelAuto = 800.0;
-const float accelJog  = 1500.0;
+const float velJog    = 600.0; // velocidade de jog (botão pressionado)
+const float velAuto   = 1000.0; // velocidade de movimento automático (apertou botão e soltou)
+const float accelAuto = 800.0; // aceleração de movimento automático (apertou botão e soltou)
+const float accelJog  = 1500.0; // aceleração de jog (botão pressionado)
 
 const unsigned long TEMPO_LONGO     = 5000;   // 5s btn1 = aprendizado
 const unsigned long DEBOUNCE_MS     = 50;     // tempo de estabilização do botão
 const unsigned long INTERVALO_SAVE  = 800;    // tempo mínimo entre salvamentos
 
-long posicaoAberta  = 0;
+long posicaoAberta  = 0; 
 long posicaoFechada = 0;
 
 bool modoAprendizado = false;
@@ -120,8 +120,11 @@ void loop() {
       b1JaEstavaPressionado = false;
       if (!b1LongFired) {
         stepper.moveTo(posicaoAberta);
-        Serial.printf("[ABRIR] atual=%ld alvo=%ld\n",
-                      stepper.currentPosition(), posicaoAberta);
+        Serial.println("[ABRIR]");
+        Serial.print(" atual=");
+        Serial.println(stepper.currentPosition());
+        Serial.print(" alvo=");
+        Serial.println(posicaoAberta);
       }
     }
 
@@ -138,8 +141,11 @@ void loop() {
 
     if (novoBtn2) {
       stepper.moveTo(posicaoFechada);
-      Serial.printf("[FECHAR] atual=%ld alvo=%ld\n",
-                    stepper.currentPosition(), posicaoFechada);
+      Serial.println("[FECHAR]");
+      Serial.print(" atual=");
+      Serial.println(stepper.currentPosition());
+      Serial.print(" alvo=");
+      Serial.println(posicaoFechada);
     }
 
     stepper.run();
@@ -156,8 +162,11 @@ void loop() {
       stepper.run();
 
       if (agora - ultimoPrint > 300) {
-        Serial.printf("[JOG+] pos=%ld dist=%ld\n",
-                      stepper.currentPosition(), stepper.distanceToGo());
+        Serial.println("[JOG+]");
+        Serial.print(" pos=");
+        Serial.println(stepper.currentPosition());
+        Serial.print(" dist=");
+        Serial.println(stepper.distanceToGo());
         ultimoPrint = agora;
       }
     } else if (b2 && !b1) {
@@ -169,8 +178,11 @@ void loop() {
       stepper.run();
 
       if (agora - ultimoPrint > 300) {
-        Serial.printf("[JOG-] pos=%ld dist=%ld\n",
-                      stepper.currentPosition(), stepper.distanceToGo());
+        Serial.println("[JOG-]");
+        Serial.print(" pos=");
+        Serial.println(stepper.currentPosition());
+        Serial.print(" dist=");
+        Serial.println(stepper.distanceToGo());
         ultimoPrint = agora;
       }
     } else {
