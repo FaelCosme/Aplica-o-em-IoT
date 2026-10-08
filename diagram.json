@@ -48,12 +48,18 @@
       "left": 340,
       "rotate": 90,
       "attrs": { "value": "4700" }
+    },
+    {
+      "type": "wokwi-pushbutton",
+      "id": "btn3",
+      "top": 121.4,
+      "left": 518.4,
+      "attrs": { "color": "blue", "xray": "1" }
     }
   ],
   "connections": [
     [ "esp:TX", "$serialMonitor:RX", "", [] ],
     [ "esp:RX", "$serialMonitor:TX", "", [] ],
-
     [ "drv1:1B", "stepper1:B-", "green", [ "v0" ] ],
     [ "drv1:1A", "stepper1:B+", "green", [ "v0" ] ],
     [ "drv1:2A", "stepper1:A+", "green", [ "v0" ] ],
@@ -61,16 +67,16 @@
     [ "drv1:SLEEP", "drv1:RESET", "green", [ "v0" ] ],
     [ "drv1:STEP", "esp:4", "yellow", [ "v0" ] ],
     [ "drv1:DIR", "esp:5", "yellow", [ "v0" ] ],
-
     [ "btn1:1.l", "esp:21", "green", [ "h0" ] ],
     [ "btn1:2.r", "esp:GND.1", "black", [ "h0" ] ],
     [ "r1:1", "btn1:1.l", "red", [ "h0" ] ],
     [ "r1:2", "esp:3V3", "red", [ "h0" ] ],
-
     [ "btn2:1.l", "esp:22", "green", [ "h0" ] ],
     [ "btn2:2.r", "esp:GND.1", "black", [ "h0" ] ],
     [ "r2:1", "btn2:1.l", "red", [ "h0" ] ],
-    [ "r2:2", "esp:3V3", "red", [ "h0" ] ]
+    [ "r2:2", "esp:3V3", "red", [ "h0" ] ],
+    [ "btn3:1.l", "esp:23", "green", [ "h0" ] ],
+    [ "btn3:2.r", "esp:GND.1", "black", [ "h0" ] ]
   ],
   "dependencies": {}
 }

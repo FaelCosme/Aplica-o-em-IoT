@@ -1,57 +1,206 @@
 #include "AccelStepper.h"
+#include <Preferences.h>
 
-// Pinos do driver do motor de passo
 #define stepPin 4
-#define dirPin  5   // pino de direção do driver (ajuste conforme sua ligação)
+#define dirPin  5
 #define motorInterfaceType 1
 
-// Botões
-const int pinoBotao1 = 21; // gira num sentido
-const int pinoBotao2 = 22; // gira no sentido contrário
-
-// Configurações de giro
-const float velocidadeMotor = 800.0;      // passos por segundo
-const unsigned long duracaoGiro = 3000;   // tempo girando, em ms (3 segundos)
+const int pinoBtn1    = 21;
+const int pinoBtn2    = 22;
+const int pinoBtnSave = 23;
 
 AccelStepper stepper = AccelStepper(motorInterfaceType, stepPin, dirPin);
+Preferences prefs;
 
-// Controle de estado
-enum EstadoMotor { PARADO, GIRANDO_FRENTE, GIRANDO_TRAS };
-EstadoMotor estado = PARADO;
-unsigned long tempoInicioGiro = 0;
+const float velJog    = 600.0;
+const float velAuto   = 1000.0;
+const float accelAuto = 800.0;
+const float accelJog  = 1500.0;
+
+const unsigned long TEMPO_LONGO     = 2000;   // 2s btn1 = aprendizado
+const unsigned long DEBOUNCE_MS     = 50;     // tempo de estabilização do botão
+const unsigned long INTERVALO_SAVE  = 800;    // tempo mínimo entre salvamentos
+
+long posicaoAberta  = 0;
+long posicaoFechada = 0;
+
+bool modoAprendizado = false;
+int  etapaSalvar     = 0;
+
+// --- estados de debounce (por botão) ---
+struct Debounce {
+  bool estadoEstavel;      // estado "firmado" (true = pressionado)
+  bool ultimaLeitura;      // ultima leitura crua
+  unsigned long ultimaMudanca;
+};
+
+Debounce d1    = { false, false, 0 };
+Debounce d2    = { false, false, 0 };
+Debounce dSave = { false, false, 0 };
+
+// Retorna true somente na transição "soltou -> pressionou" (após debounce)
+bool leBotaoDebounced(int pino, Debounce &d) {
+  bool leitura = (digitalRead(pino) == LOW);
+  if (leitura != d.ultimaLeitura) {
+    d.ultimaMudanca = millis();
+    d.ultimaLeitura = leitura;
+  }
+  if ((millis() - d.ultimaMudanca) >= DEBOUNCE_MS) {
+    if (d.estadoEstavel != leitura) {
+      bool pressaoNova = (leitura == true);
+      d.estadoEstavel = leitura;
+      return pressaoNova;   // true apenas na borda de pressão
+    }
+  }
+  return false;
+}
+
+// Retorna o estado "pressionado" (já debounced), útil para o jog
+bool estaPressionado(Debounce &d) {
+  return d.estadoEstavel;
+}
+
+unsigned long b1PressTime = 0;
+bool b1LongFired = false;
+unsigned long ultimoSave = 0;
+unsigned long ultimoPrint = 0;
 
 void setup() {
-  stepper.setMaxSpeed(1000);
+  Serial.begin(115200);
+  stepper.setMaxSpeed(velAuto);
+  stepper.setAcceleration(accelAuto);
 
-  pinMode(pinoBotao1, INPUT);
-  pinMode(pinoBotao2, INPUT);
+  pinMode(pinoBtn1, INPUT_PULLUP);
+  pinMode(pinoBtn2, INPUT_PULLUP);
+  pinMode(pinoBtnSave, INPUT_PULLUP);
+
+  prefs.begin("cortina", false);
+  posicaoAberta  = prefs.getLong("aberta", 0);
+  posicaoFechada = prefs.getLong("fechada", 0);
+
+  stepper.setCurrentPosition(posicaoFechada);
+
+  Serial.printf("Boot: ABERTA=%ld FECHADA=%ld\n", posicaoAberta, posicaoFechada);
+  Serial.println("Modo NORMAL");
 }
 
 void loop() {
-  int estadoBotao1 = digitalRead(pinoBotao1);
-  int estadoBotao2 = digitalRead(pinoBotao2);
+  // Borda de pressão (debounced) de cada botão
+  bool novoBtn1    = leBotaoDebounced(pinoBtn1, d1);
+  bool novoBtn2    = leBotaoDebounced(pinoBtn2, d2);
+  bool novoBtnSave = leBotaoDebounced(pinoBtnSave, dSave);
 
-  // Só aceita novo comando se o motor estiver parado
-  if (estado == PARADO) {
-    if (estadoBotao1 == LOW) {
-      stepper.setSpeed(velocidadeMotor);   // sentido horário
-      tempoInicioGiro = millis();
-      estado = GIRANDO_FRENTE;
-    } else if (estadoBotao2 == LOW) {
-      stepper.setSpeed(-velocidadeMotor);  // sentido anti-horário (oposto)
-      tempoInicioGiro = millis();
-      estado = GIRANDO_TRAS;
+  // Estado "está pressionado" (para o jog)
+  bool b1    = estaPressionado(d1);
+  bool b2    = estaPressionado(d2);
+
+  unsigned long agora = millis();
+
+  if (!modoAprendizado) {
+    // ---------------- MODO NORMAL ----------------
+
+    if (novoBtn1) {
+      b1PressTime = agora;
+      b1LongFired = false;
     }
-  }
 
-  // Enquanto estiver girando, continua rodando o motor
-  if (estado == GIRANDO_FRENTE || estado == GIRANDO_TRAS) {
-    stepper.runSpeed();
+    // Curto no btn1 = abrir (mas só se não virou longo)
+    if (!b1 && !b1LongFired && (b1PressTime != 0) &&
+        (agora - b1PressTime < TEMPO_LONGO)) {
+      // Já soltou e não completou o tempo longo
+      // (checamos via transição de "não pressionado" após ter pressionado)
+    }
 
-    // Verifica se já passou o tempo definido
-    if (millis() - tempoInicioGiro >= duracaoGiro) {
-      stepper.setSpeed(0);
-      estado = PARADO;
+    // Detecta soltura: se não está mais pressionado e houve um início de pressão
+    // Usaremos uma flag simples para saber que foi soltura
+    static bool b1JaEstavaPressionado = false;
+    if (b1) {
+      b1JaEstavaPressionado = true;
+    } else if (b1JaEstavaPressionado) {
+      b1JaEstavaPressionado = false;
+      if (!b1LongFired) {
+        stepper.moveTo(posicaoAberta);
+        Serial.printf("[ABRIR] atual=%ld alvo=%ld\n",
+                      stepper.currentPosition(), posicaoAberta);
+      }
+    }
+
+    // Segurou tempo suficiente = aprendizado
+    if (b1 && !b1LongFired && (b1PressTime != 0) &&
+        (agora - b1PressTime >= TEMPO_LONGO)) {
+      b1LongFired = true;
+      modoAprendizado = true;
+      etapaSalvar = 0;
+      Serial.println(">> APRENDIZADO ativo");
+      Serial.println("   SEGURE btn1 ou btn2 para mover");
+      Serial.println("   Aperte btnSave para gravar");
+    }
+
+    if (novoBtn2) {
+      stepper.moveTo(posicaoFechada);
+      Serial.printf("[FECHAR] atual=%ld alvo=%ld\n",
+                    stepper.currentPosition(), posicaoFechada);
+    }
+
+    stepper.run();
+
+  } else {
+    // ------------- MODO APRENDIZADO -------------
+
+    if (b1 && !b2) {
+      if (stepper.distanceToGo() < 200) {
+        stepper.moveTo(stepper.currentPosition() + 100000);
+      }
+      stepper.setMaxSpeed(velJog);
+      stepper.setAcceleration(accelJog);
+      stepper.run();
+
+      if (agora - ultimoPrint > 300) {
+        Serial.printf("[JOG+] pos=%ld dist=%ld\n",
+                      stepper.currentPosition(), stepper.distanceToGo());
+        ultimoPrint = agora;
+      }
+    } else if (b2 && !b1) {
+      if (stepper.distanceToGo() > -200) {
+        stepper.moveTo(stepper.currentPosition() - 100000);
+      }
+      stepper.setMaxSpeed(velJog);
+      stepper.setAcceleration(accelJog);
+      stepper.run();
+
+      if (agora - ultimoPrint > 300) {
+        Serial.printf("[JOG-] pos=%ld dist=%ld\n",
+                      stepper.currentPosition(), stepper.distanceToGo());
+        ultimoPrint = agora;
+      }
+    } else {
+      if (stepper.distanceToGo() != 0) {
+        stepper.moveTo(stepper.currentPosition());
+      }
+      stepper.setMaxSpeed(velJog);
+      stepper.setAcceleration(accelJog);
+      stepper.run();
+    }
+
+    // Salvar: só na borda + respeita intervalo mínimo entre salvamentos
+    if (novoBtnSave && (agora - ultimoSave >= INTERVALO_SAVE)) {
+      ultimoSave = agora;
+      long pos = stepper.currentPosition();
+      if (etapaSalvar == 0) {
+        posicaoAberta = pos;
+        prefs.putLong("aberta", posicaoAberta);
+        Serial.printf("Salvou ABERTA = %ld\n", posicaoAberta);
+        etapaSalvar = 1;
+      } else {
+        posicaoFechada = pos;
+        prefs.putLong("fechada", posicaoFechada);
+        Serial.printf("Salvou FECHADA = %ld\n", posicaoFechada);
+        etapaSalvar = 0;
+        modoAprendizado = false;
+        Serial.println(">> MODO NORMAL");
+        Serial.printf("Finais: ABERTA=%ld FECHADA=%ld\n",
+                      posicaoAberta, posicaoFechada);
+      }
     }
   }
 }
