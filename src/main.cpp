@@ -17,7 +17,7 @@ const float velAuto   = 1000.0;
 const float accelAuto = 800.0;
 const float accelJog  = 1500.0;
 
-const unsigned long TEMPO_LONGO     = 2000;   // 2s btn1 = aprendizado
+const unsigned long TEMPO_LONGO     = 5000;   // 5s btn1 = aprendizado
 const unsigned long DEBOUNCE_MS     = 50;     // tempo de estabilização do botão
 const unsigned long INTERVALO_SAVE  = 800;    // tempo mínimo entre salvamentos
 
