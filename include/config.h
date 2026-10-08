@@ -29,15 +29,9 @@
 #define WIFI_PASSWORD    ""
 
 // ===== MQTT / Home Assistant =====
-<<<<<<< HEAD
 #define MQTT_BROKER_ADDR IPAddress(0,0,0,0) //IP do broker MQTT
 #define MQTT_USERNAME    "SeuUsuarioMQTT"
 #define MQTT_PASSWORD    "SuaSenhaMQTT"
-=======
-#define MQTT_BROKER_ADDR IPAddress(0,0,0,0) // IP do broker MQTT
-#define MQTT_USERNAME    "SeuUsuarioMQTT"
-#define MQTT_PASSWORD    "SeuPasswordMQTT"
->>>>>>> 0000f28 (fix: usuário, senha e IP do broker)
 
 #define HA_DEVICE_ID     "esp32_cortina_01"
 #define HA_DEVICE_NAME   "ESP32 Cortina"
