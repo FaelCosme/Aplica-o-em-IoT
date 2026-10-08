@@ -1,218 +1,138 @@
-#include "AccelStepper.h"
-#include <Preferences.h>
+#include "config.h"
+#include "hardware/motor.h"
+#include "hardware/botoes.h"
+#include "logica/posicoes.h"
+#include "logica/aprendizado.h"
+#include "rede/comunicacao.h"
 
-#define stepPin 4
-#define dirPin  5
-#define motorInterfaceType 1
+#include <Arduino.h>
+#include <string.h>
 
-const int pinoBtn1    = 21;
-const int pinoBtn2    = 22;
-const int pinoBtnSave = 23;
+// -------- Estado do botão 1 (toque curto x longo) --------
+static bool          btn1Aguardando = false;
+static unsigned long btn1PressTime  = 0;
+static bool          btn1LongFired  = false;
 
-AccelStepper stepper = AccelStepper(motorInterfaceType, stepPin, dirPin);
-Preferences prefs;
+static unsigned long ultimoSave    = 0;
+static unsigned long ultimaPubHA   = 0;
 
-const float velJog    = 600.0; // velocidade de jog (botão pressionado)
-const float velAuto   = 1000.0; // velocidade de movimento automático (apertou botão e soltou)
-const float accelAuto = 800.0; // aceleração de movimento automático (apertou botão e soltou)
-const float accelJog  = 1500.0; // aceleração de jog (botão pressionado)
-
-const unsigned long TEMPO_LONGO     = 5000;   // 5s btn1 = aprendizado
-const unsigned long DEBOUNCE_MS     = 50;     // tempo de estabilização do botão
-const unsigned long INTERVALO_SAVE  = 800;    // tempo mínimo entre salvamentos
-
-long posicaoAberta  = 0; 
-long posicaoFechada = 0;
-
-bool modoAprendizado = false;
-int  etapaSalvar     = 0;
-
-// --- estados de debounce (por botão) ---
-struct Debounce {
-  bool estadoEstavel;      // estado "firmado" (true = pressionado)
-  bool ultimaLeitura;      // ultima leitura crua
-  unsigned long ultimaMudanca;
-};
-
-Debounce d1    = { false, false, 0 };
-Debounce d2    = { false, false, 0 };
-Debounce dSave = { false, false, 0 };
-
-// Retorna true somente na transição "soltou -> pressionou" (após debounce)
-bool leBotaoDebounced(int pino, Debounce &d) {
-  bool leitura = (digitalRead(pino) == LOW);
-  if (leitura != d.ultimaLeitura) {
-    d.ultimaMudanca = millis();
-    d.ultimaLeitura = leitura;
-  }
-  if ((millis() - d.ultimaMudanca) >= DEBOUNCE_MS) {
-    if (d.estadoEstavel != leitura) {
-      bool pressaoNova = (leitura == true);
-      d.estadoEstavel = leitura;
-      return pressaoNova;   // true apenas na borda de pressão
-    }
-  }
-  return false;
+// -------- Conversão passos <-> porcentagem --------
+static int posicaoParaPorcento(long pos) {
+  long a = posicoesAberta();
+  long f = posicoesFechada();
+  if (a == f) return 0;
+  long pct = (pos - f) * 100L / (a - f);
+  if (pct < 0)   pct = 0;
+  if (pct > 100) pct = 100;
+  return (int)pct;
 }
 
-// Retorna o estado "pressionado" (já debounced), útil para o jog
-bool estaPressionado(Debounce &d) {
-  return d.estadoEstavel;
+static long porcentoParaPosicao(int pct) {
+  long a = posicoesAberta();
+  long f = posicoesFechada();
+  return f + (a - f) * pct / 100;
 }
 
-unsigned long b1PressTime = 0;
-bool b1LongFired = false;
-unsigned long ultimoSave = 0;
-unsigned long ultimoPrint = 0;
+// -------- Comandos vindos do Home Assistant --------
+static void onComandoHA(const char* cmd, int valor) {
+  if (strcmp(cmd, "OPEN") == 0) {
+    motorIrPara(posicoesAberta());
+    comunicacaoPublicarEstado("opening");
+  } else if (strcmp(cmd, "CLOSE") == 0) {
+    motorIrPara(posicoesFechada());
+    comunicacaoPublicarEstado("closing");
+  } else if (strcmp(cmd, "STOP") == 0) {
+    motorParar();
+    comunicacaoPublicarEstado("stopped");
+  } else if (strcmp(cmd, "POSITION") == 0) {
+    motorIrPara(porcentoParaPosicao(valor));
+  } else if (strcmp(cmd, "LEARNING_ON") == 0) {
+    aprendizadoEntrar();
+  } else if (strcmp(cmd, "LEARNING_OFF") == 0) {
+    aprendizadoSair();
+  }
+}
 
 void setup() {
   Serial.begin(115200);
-  stepper.setMaxSpeed(velAuto);
-  stepper.setAcceleration(accelAuto);
+  Serial.println("\r\n--- Trabalho-IoT: Cortina ---");
 
-  pinMode(pinoBtn1, INPUT_PULLUP);
-  pinMode(pinoBtn2, INPUT_PULLUP);
-  pinMode(pinoBtnSave, INPUT_PULLUP);
+  motorInit();
+  botoesInit();
+  posicoesInit();
+  aprendizadoInit();
 
-  prefs.begin("cortina", false);
-  posicaoAberta  = prefs.getLong("aberta", 0);
-  posicaoFechada = prefs.getLong("fechada", 0);
+  // Assume que a cortina começa FECHADA na energização
+  motorSetPosicao(posicoesFechada());
 
-  stepper.setCurrentPosition(posicaoFechada);
+  comunicacaoSetCallback(onComandoHA);
+  comunicacaoInit();
 
-  Serial.printf("Boot: ABERTA=%ld FECHADA=%ld\n", posicaoAberta, posicaoFechada);
+  Serial.printf("Boot: ABERTA=%ld FECHADA=%ld\r\n",
+                posicoesAberta(), posicoesFechada());
   Serial.println("Modo NORMAL");
 }
 
 void loop() {
-  // Borda de pressão (debounced) de cada botão
-  bool novoBtn1    = leBotaoDebounced(pinoBtn1, d1);
-  bool novoBtn2    = leBotaoDebounced(pinoBtn2, d2);
-  bool novoBtnSave = leBotaoDebounced(pinoBtnSave, dSave);
-
-  // Estado "está pressionado" (para o jog)
-  bool b1    = estaPressionado(d1);
-  bool b2    = estaPressionado(d2);
+  motorUpdate();
+  botoesUpdate();
+  comunicacaoUpdate();
 
   unsigned long agora = millis();
 
-  if (!modoAprendizado) {
-    // ---------------- MODO NORMAL ----------------
-
-    if (novoBtn1) {
-      b1PressTime = agora;
-      b1LongFired = false;
+  if (aprendizadoAtivo()) {
+    // ================= MODO APRENDIZADO =================
+    if (btn1Pressionado() && !btn2Pressionado()) {
+      motorJog(+1);
+    } else if (btn2Pressionado() && !btn1Pressionado()) {
+      motorJog(-1);
+    } else {
+      motorJogParar();
     }
 
-    // Curto no btn1 = abrir (mas só se não virou longo)
-    if (!b1 && !b1LongFired && (b1PressTime != 0) &&
-        (agora - b1PressTime < TEMPO_LONGO)) {
-      // Já soltou e não completou o tempo longo
-      // (checamos via transição de "não pressionado" após ter pressionado)
+    if (btnSaveApertou() && (agora - ultimoSave >= INTERVALO_SAVE)) {
+      ultimoSave = agora;
+      aprendizadoSalvar(motorPosicaoAtual());
     }
-
-    // Detecta soltura: se não está mais pressionado e houve um início de pressão
-    // Usaremos uma flag simples para saber que foi soltura
-    static bool b1JaEstavaPressionado = false;
-    if (b1) {
-      b1JaEstavaPressionado = true;
-    } else if (b1JaEstavaPressionado) {
-      b1JaEstavaPressionado = false;
-      if (!b1LongFired) {
-        stepper.moveTo(posicaoAberta);
-        Serial.println("[ABRIR]");
-        Serial.print(" atual=");
-        Serial.println(stepper.currentPosition());
-        Serial.print(" alvo=");
-        Serial.println(posicaoAberta);
-      }
-    }
-
-    // Segurou tempo suficiente = aprendizado
-    if (b1 && !b1LongFired && (b1PressTime != 0) &&
-        (agora - b1PressTime >= TEMPO_LONGO)) {
-      b1LongFired = true;
-      modoAprendizado = true;
-      etapaSalvar = 0;
-      Serial.println(">> APRENDIZADO ativo");
-      Serial.println("   SEGURE btn1 ou btn2 para mover");
-      Serial.println("   Aperte btnSave para gravar");
-    }
-
-    if (novoBtn2) {
-      stepper.moveTo(posicaoFechada);
-      Serial.println("[FECHAR]");
-      Serial.print(" atual=");
-      Serial.println(stepper.currentPosition());
-      Serial.print(" alvo=");
-      Serial.println(posicaoFechada);
-    }
-
-    stepper.run();
 
   } else {
-    // ------------- MODO APRENDIZADO -------------
+    // ================== MODO NORMAL =====================
 
-    if (b1 && !b2) {
-      if (stepper.distanceToGo() < 200) {
-        stepper.moveTo(stepper.currentPosition() + 100000);
-      }
-      stepper.setMaxSpeed(velJog);
-      stepper.setAcceleration(accelJog);
-      stepper.run();
-
-      if (agora - ultimoPrint > 300) {
-        Serial.println("[JOG+]");
-        Serial.print(" pos=");
-        Serial.println(stepper.currentPosition());
-        Serial.print(" dist=");
-        Serial.println(stepper.distanceToGo());
-        ultimoPrint = agora;
-      }
-    } else if (b2 && !b1) {
-      if (stepper.distanceToGo() > -200) {
-        stepper.moveTo(stepper.currentPosition() - 100000);
-      }
-      stepper.setMaxSpeed(velJog);
-      stepper.setAcceleration(accelJog);
-      stepper.run();
-
-      if (agora - ultimoPrint > 300) {
-        Serial.println("[JOG-]");
-        Serial.print(" pos=");
-        Serial.println(stepper.currentPosition());
-        Serial.print(" dist=");
-        Serial.println(stepper.distanceToGo());
-        ultimoPrint = agora;
-      }
-    } else {
-      if (stepper.distanceToGo() != 0) {
-        stepper.moveTo(stepper.currentPosition());
-      }
-      stepper.setMaxSpeed(velJog);
-      stepper.setAcceleration(accelJog);
-      stepper.run();
+    // btn1 — detecta curto vs longo
+    if (btn1Apertou()) {
+      btn1Aguardando = true;
+      btn1PressTime  = agora;
+      btn1LongFired  = false;
     }
 
-    // Salvar: só na borda + respeita intervalo mínimo entre salvamentos
-    if (novoBtnSave && (agora - ultimoSave >= INTERVALO_SAVE)) {
-      ultimoSave = agora;
-      long pos = stepper.currentPosition();
-      if (etapaSalvar == 0) {
-        posicaoAberta = pos;
-        prefs.putLong("aberta", posicaoAberta);
-        Serial.printf("Salvou ABERTA = %ld\n", posicaoAberta);
-        etapaSalvar = 1;
-      } else {
-        posicaoFechada = pos;
-        prefs.putLong("fechada", posicaoFechada);
-        Serial.printf("Salvou FECHADA = %ld\n", posicaoFechada);
-        etapaSalvar = 0;
-        modoAprendizado = false;
-        Serial.println(">> MODO NORMAL");
-        Serial.printf("Finais: ABERTA=%ld FECHADA=%ld\n",
-                      posicaoAberta, posicaoFechada);
+    if (btn1Aguardando && !btn1Pressionado()) {
+      // Soltou: se não virou "longo", foi toque curto = ABRIR
+      if (!btn1LongFired) {
+        motorIrPara(posicoesAberta());
+        Serial.printf("[ABRIR] atual=%ld alvo=%ld\r\n",
+                      motorPosicaoAtual(), posicoesAberta());
       }
+      btn1Aguardando = false;
+      btn1LongFired  = false;
     }
+
+    if (btn1Aguardando && btn1Pressionado() && !btn1LongFired &&
+        (agora - btn1PressTime >= TEMPO_LONGO)) {
+      btn1LongFired = true;
+      aprendizadoEntrar();
+    }
+
+    // btn2 — fechar
+    if (btn2Apertou()) {
+      motorIrPara(posicoesFechada());
+      Serial.printf("[FECHAR] atual=%ld alvo=%ld\r\n",
+                    motorPosicaoAtual(), posicoesFechada());
+    }
+  }
+
+  // Publica posição periódica no HA
+  if (agora - ultimaPubHA >= INTERVALO_PUB_HA) {
+    ultimaPubHA = agora;
+    comunicacaoPublicarPosicao(posicaoParaPorcento(motorPosicaoAtual()));
   }
 }
