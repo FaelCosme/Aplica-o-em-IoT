@@ -5,9 +5,9 @@
 #define PINO_DIR         5
 
 // ===== Botões =====
-#define PINO_BTN1        21
-#define PINO_BTN2        22
-#define PINO_BTNSAVE     23
+#define PINO_BTN_ABRIR        21
+#define PINO_BTN_FECHAR        22
+// (btnSave/GPIO 23 não é mais usado, mas pode ficar ligado sem problema)
 
 // ===== Parâmetros do motor =====
 #define VEL_JOG          600.0
@@ -16,10 +16,13 @@
 #define ACCEL_JOG        1500.0
 
 // ===== Tempos =====
-#define TEMPO_LONGO      2000      // ms de pressão no btn1 para virar "longo"
-#define DEBOUNCE_MS      50        // ms de estabilização dos botões
-#define INTERVALO_SAVE   800       // ms mínimo entre dois salvamentos
-#define INTERVALO_PUB_HA 500       // ms entre publicações no Home Assistant
+#define DEBOUNCE_MS      50
+#define INTERVALO_PUB_HA 500
+
+// ===== Tamanho padrão do percurso =====
+// Ajuste conforme sua mecânica. Se preferir, você pode mudar isso
+// depois direto pelo HA (slider "Passos Totais").
+#define PASSOS_TOTAIS_DEFAULT  1600
 
 // ===== NVS =====
 #define NVS_NAMESPACE    "cortina"
@@ -29,7 +32,7 @@
 #define WIFI_PASSWORD    ""
 
 // ===== MQTT / Home Assistant =====
-#define MQTT_BROKER_ADDR IPAddress(0,0,0,0) //IP do broker MQTT
+#define MQTT_BROKER_ADDR IPAddress(0,0,0,0) // IP do broker MQTT
 #define MQTT_USERNAME    "SeuUsuarioMQTT"
 #define MQTT_PASSWORD    "SuaSenhaMQTT"
 

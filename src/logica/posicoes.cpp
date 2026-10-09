@@ -3,24 +3,20 @@
 #include <Preferences.h>
 
 static Preferences prefs;
-static long _aberta  = 0;
-static long _fechada = 0;
+static long _passosTotais = PASSOS_TOTAIS_DEFAULT;
 
 void posicoesInit() {
   prefs.begin(NVS_NAMESPACE, false);
-  _aberta  = prefs.getLong("aberta",  0);
-  _fechada = prefs.getLong("fechada", 0);
+  _passosTotais = prefs.getLong("total", PASSOS_TOTAIS_DEFAULT);
+  if (_passosTotais <= 0) _passosTotais = PASSOS_TOTAIS_DEFAULT;
 }
 
-long posicoesAberta()  { return _aberta;  }
-long posicoesFechada() { return _fechada; }
-
-void posicoesSalvarAberta(long v) {
-  _aberta = v;
-  prefs.putLong("aberta", v);
+long posicoesPassosTotais() {
+  return _passosTotais;
 }
 
-void posicoesSalvarFechada(long v) {
-  _fechada = v;
-  prefs.putLong("fechada", v);
+void posicoesSalvarPassosTotais(long v) {
+  if (v <= 0) return;
+  _passosTotais = v;
+  prefs.putLong("total", v);
 }

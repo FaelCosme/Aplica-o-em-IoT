@@ -2,54 +2,54 @@
 #include "hardware/motor.h"
 #include "hardware/botoes.h"
 #include "logica/posicoes.h"
-#include "logica/aprendizado.h"
 #include "rede/comunicacao.h"
 
 #include <Arduino.h>
 #include <string.h>
 
-// -------- Estado do botão 1 (toque curto x longo) --------
-static bool          btn1Aguardando = false;
-static unsigned long btn1PressTime  = 0;
-static bool          btn1LongFired  = false;
-
-static unsigned long ultimoSave    = 0;
-static unsigned long ultimaPubHA   = 0;
+static unsigned long ultimaPubHA = 0;
 
 // -------- Conversão passos <-> porcentagem --------
-static int posicaoParaPorcento(long pos) {
-  long a = posicoesAberta();
-  long f = posicoesFechada();
-  if (a == f) return 0;
-  long pct = (pos - f) * 100L / (a - f);
+// 0 = fechada (0%), passosTotais = aberta (100%).
+static int passosParaPorcento(long pos) {
+  long total = posicoesPassosTotais();
+  if (total <= 0) return 0;
+  long pct = pos * 100L / total;
   if (pct < 0)   pct = 0;
   if (pct > 100) pct = 100;
   return (int)pct;
 }
 
-static long porcentoParaPosicao(int pct) {
-  long a = posicoesAberta();
-  long f = posicoesFechada();
-  return f + (a - f) * pct / 100;
+static long porcentoParaPassos(int pct) {
+  if (pct < 0)   pct = 0;
+  if (pct > 100) pct = 100;
+  return posicoesPassosTotais() * pct / 100;
 }
 
-// -------- Comandos vindos do Home Assistant --------
-static void onComandoHA(const char* cmd, int valor) {
-  if (strcmp(cmd, "OPEN") == 0) {
-    motorIrPara(posicoesAberta());
-    comunicacaoPublicarEstado("opening");
-  } else if (strcmp(cmd, "CLOSE") == 0) {
-    motorIrPara(posicoesFechada());
-    comunicacaoPublicarEstado("closing");
-  } else if (strcmp(cmd, "STOP") == 0) {
+// -------- Comandos vindos do HA --------
+static void onComandoHA(const char* cmd, long valor) {
+  if (strcmp(cmd, "ABRIR") == 0) {
+    motorIrPara(posicoesPassosTotais());
+    // comunicacaoPublicarEstado("CORTINA ABRINDO");
+  } else if (strcmp(cmd, "FECHAR") == 0) {
+    motorIrPara(0);
+    // comunicacaoPublicarEstado("CORTINA FECHANDO");
+  } else if (strcmp(cmd, "PARAR") == 0) {
     motorParar();
-    comunicacaoPublicarEstado("stopped");
-  } else if (strcmp(cmd, "POSITION") == 0) {
-    motorIrPara(porcentoParaPosicao(valor));
-  } else if (strcmp(cmd, "LEARNING_ON") == 0) {
-    aprendizadoEntrar();
-  } else if (strcmp(cmd, "LEARNING_OFF") == 0) {
-    aprendizadoSair();
+    comunicacaoPublicarEstado("CORTINA PARADA");
+  } else if (strcmp(cmd, "IR_PARA") == 0) {
+    motorIrPara(porcentoParaPassos((int)valor));
+    Serial.printf("[HA] IR_PARA %ld%%\r\n", valor);
+  } else if (strcmp(cmd, "SET_TOTAL") == 0) {
+    Serial.printf("[HA] PASSOS_TOTAIS = %ld\r\n", valor);
+  } else if (strcmp(cmd, "RESTART") == 0) {
+    if (motorEmMovimento()) {
+      Serial.println("[HA] RESTART ignorado: motor em movimento");
+    } else {
+      Serial.println("[HA] Reiniciando ESP32...");
+      delay(200);          // tempo para o log sair
+      ESP.restart();
+    }
   }
 }
 
@@ -60,17 +60,14 @@ void setup() {
   motorInit();
   botoesInit();
   posicoesInit();
-  aprendizadoInit();
 
-  // Assume que a cortina começa FECHADA na energização
-  motorSetPosicao(posicoesFechada());
+  // Assume cortina FECHADA na energização
+  motorSetPosicao(0);
 
   comunicacaoSetCallback(onComandoHA);
   comunicacaoInit();
 
-  Serial.printf("Boot: ABERTA=%ld FECHADA=%ld\r\n",
-                posicoesAberta(), posicoesFechada());
-  Serial.println("Modo NORMAL");
+  Serial.printf("Boot: PASSOS_TOTAIS=%ld\r\n", posicoesPassosTotais());
 }
 
 void loop() {
@@ -78,61 +75,50 @@ void loop() {
   botoesUpdate();
   comunicacaoUpdate();
 
-  unsigned long agora = millis();
+  // ==== Botões físicos ====
+  if (btnAbrirApertou()) {
+    motorIrPara(posicoesPassosTotais());
+    Serial.printf("[ABRIR] alvo=%ld\r\n", posicoesPassosTotais());
+  }
+  if (btnFecharApertou()) {
+    motorIrPara(0);
+    Serial.println("[FECHAR] alvo=0");
+  }
 
-  if (aprendizadoAtivo()) {
-    // ================= MODO APRENDIZADO =================
-    if (btn1Pressionado() && !btn2Pressionado()) {
-      motorJog(+1);
-    } else if (btn2Pressionado() && !btn1Pressionado()) {
-      motorJog(-1);
+  // ==== Detecta quando o motor para e publica estado final ====
+  static bool estavaMovendo = false;
+  static unsigned long parouEm = 0;
+
+  bool movendoAgora = motorEmMovimento();
+
+  if (estavaMovendo && !movendoAgora) {
+    parouEm = millis();   // acabou de parar
+  }
+
+  if (!movendoAgora && parouEm != 0 && (millis() - parouEm >= 300)) {
+    parouEm = 0;
+    long pos   = motorPosicaoAtual();
+    long total = posicoesPassosTotais();
+
+    if (pos >= total - 50) {
+      comunicacaoPublicarEstado("ABERTO");
+      Serial.println("[ESTADO] ABERTO");
+    } else if (pos <= 50) {
+      comunicacaoPublicarEstado("FECHADO");
+      Serial.println("[ESTADO] FECHADO");
     } else {
-      motorJogParar();
-    }
-
-    if (btnSaveApertou() && (agora - ultimoSave >= INTERVALO_SAVE)) {
-      ultimoSave = agora;
-      aprendizadoSalvar(motorPosicaoAtual());
-    }
-
-  } else {
-    // ================== MODO NORMAL =====================
-
-    // btn1 — detecta curto vs longo
-    if (btn1Apertou()) {
-      btn1Aguardando = true;
-      btn1PressTime  = agora;
-      btn1LongFired  = false;
-    }
-
-    if (btn1Aguardando && !btn1Pressionado()) {
-      // Soltou: se não virou "longo", foi toque curto = ABRIR
-      if (!btn1LongFired) {
-        motorIrPara(posicoesAberta());
-        Serial.printf("[ABRIR] atual=%ld alvo=%ld\r\n",
-                      motorPosicaoAtual(), posicoesAberta());
-      }
-      btn1Aguardando = false;
-      btn1LongFired  = false;
-    }
-
-    if (btn1Aguardando && btn1Pressionado() && !btn1LongFired &&
-        (agora - btn1PressTime >= TEMPO_LONGO)) {
-      btn1LongFired = true;
-      aprendizadoEntrar();
-    }
-
-    // btn2 — fechar
-    if (btn2Apertou()) {
-      motorIrPara(posicoesFechada());
-      Serial.printf("[FECHAR] atual=%ld alvo=%ld\r\n",
-                    motorPosicaoAtual(), posicoesFechada());
+      comunicacaoPublicarEstado("PARADO");
+      Serial.println("[ESTADO] PARADO (parcial)");
     }
   }
 
-  // Publica posição periódica no HA
+  estavaMovendo = movendoAgora;
+
+  // ==== Publica posição no HA a cada INTERVALO_PUB_HA ms ====
+  unsigned long agora = millis();
   if (agora - ultimaPubHA >= INTERVALO_PUB_HA) {
     ultimaPubHA = agora;
-    comunicacaoPublicarPosicao(posicaoParaPorcento(motorPosicaoAtual()));
+    int pct = passosParaPorcento(motorPosicaoAtual());
+    comunicacaoPublicarPosicao(pct);
   }
 }

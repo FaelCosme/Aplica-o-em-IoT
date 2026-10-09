@@ -1,15 +1,10 @@
 #pragma once
 
 void botoesInit();
-void botoesUpdate();            // chamar dentro do loop()
+void botoesUpdate();
 
-// btn1
-bool btn1Apertou();             // borda de pressão (uma vez por toque)
-bool btn1Pressionado();         // estado contínuo
+bool btnAbrirApertou();
+bool btnAbrirPressionado();
 
-// btn2
-bool btn2Apertou();
-bool btn2Pressionado();
-
-// btnSave
-bool btnSaveApertou();
+bool btnFecharApertou();
+bool btnFecharPressionado();

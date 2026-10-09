@@ -3,12 +3,13 @@
 void comunicacaoInit();
 void comunicacaoUpdate();
 
-// Publica no HA
-void comunicacaoPublicarEstado(const char* estado);   // "open" | "closed" | "opening" | "closing" | "stopped"
-void comunicacaoPublicarPosicao(int posicao);         // 0..100
+void comunicacaoPublicarEstado(const char* estado);
+void comunicacaoPublicarPosicao(int posicao);
 
-// Callback que o main registra para receber comandos:
-//   cmd = "OPEN" | "CLOSE" | "STOP" | "POSITION" | "LEARNING_ON" | "LEARNING_OFF"
-//   valor = 0..100 quando cmd = "POSITION"; -1 nos demais
-typedef void (*CallbackComandoHA)(const char* cmd, int valor);
+// Callback que o main registra:
+//   cmd = "OPEN" | "CLOSE" | "STOP" | "GO_TO" | "SET_TOTAL" | "RESTART"
+//   valor = 0..100 quando cmd = "GO_TO"
+//           passos totais quando cmd = "SET_TOTAL"
+//           -1 nos demais
+typedef void (*CallbackComandoHA)(const char* cmd, long valor);
 void comunicacaoSetCallback(CallbackComandoHA cb);

@@ -1,7 +1,8 @@
 #pragma once
 
+// Módulo que guarda o tamanho do percurso (número total de passos).
+// Convenção: 0 = fechada, passosTotais = aberta.
+
 void posicoesInit();
-long posicoesAberta();
-long posicoesFechada();
-void posicoesSalvarAberta(long v);
-void posicoesSalvarFechada(long v);
+long posicoesPassosTotais();
+void posicoesSalvarPassosTotais(long v);
